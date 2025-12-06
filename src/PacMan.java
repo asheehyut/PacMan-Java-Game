@@ -9,6 +9,25 @@ import javax.swing.JFrame;
 import javax.swing.JPanel;
 import javax.swing.Timer; // <-- THIS is the one we want
 
+/*
+ * Authors: Aidan Sheehy and Ryan Sorka
+ * 
+ * References: 
+ * Game developer: Nipuna Lakruwan
+ * 
+ */
+
+/* ===== SUMMARY =====
+ * For this project we upgraded a pac-man game by integrating graph-based pathfinding algorithms since the game before was just using pixels.
+ * We used A* and BFS for the logic of the ghosts. The first thing that we did was to convert the tile based map into a graph where we able
+ * to convert each tile to a node. This allowed the ghost to navigate the maze using path finding algorithms rather than just walking around 
+ * the map randomly. After the graph was built we were able to implement all the the algorithms for each of the ghosts. This combination demonstrates 
+ * varied AI behaviors: BFS is fast and straightforward but reactive, A* is more strategic but computationally heavier, and the hybrid method 
+ * creates a more unpredictable, challenging ghost. Limitations include potential inefficiency in A* for large graphs and occasional predictable 
+ * patterns in the hybrid behavior.  Something else that we upgraded was the power pellets that allows Pac-man to eat the ghosts. This allowed the player 
+ * to have a chance at winning the game because the ghosts were relentless without them and the game was impossible.
+ */
+
 public class PacMan extends JPanel implements ActionListener, KeyListener {
 
     class Block {
@@ -23,8 +42,6 @@ public class PacMan extends JPanel implements ActionListener, KeyListener {
         char direction = 'U'; // U D L R
         int velocityX = 0;
         int velocityY = 0;
-
-        double speedMultipyer = 0.8;
 
         // r, o, p, b for ghosts, ' ' for others
         char ghostType = ' ';
@@ -61,7 +78,7 @@ public class PacMan extends JPanel implements ActionListener, KeyListener {
         }
 
         void updateVelocity() {
-            int speed = tileSize / 4;
+            int speed = tileSize / 8;               
 
             switch (this.direction) {
                 case 'U' -> {
@@ -268,7 +285,7 @@ public class PacMan extends JPanel implements ActionListener, KeyListener {
         foods.add(powerFood4);
     }
 
-    // ===== GRAPH HELPERS =====
+    // Graph Helpers
 
     private String key(int r, int c) {
         return r + "," + c;
@@ -337,7 +354,7 @@ public class PacMan extends JPanel implements ActionListener, KeyListener {
         return target;
     }
 
-    // ===== BFS (for Blinky, part of Inky) =====
+    // BFS (for Blinky and Inky)
 
     // returns next Node on shortest path from start to goal
     private Node bfsNextStep(Node start, Node goal) {
