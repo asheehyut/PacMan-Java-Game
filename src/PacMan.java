@@ -91,6 +91,7 @@ public class PacMan extends JPanel implements ActionListener, KeyListener {
         }
     }
 
+
     // ===== GRAPH NODES =====
     class Node {
         int r, c; // row, col in tileMap
@@ -107,17 +108,23 @@ public class PacMan extends JPanel implements ActionListener, KeyListener {
     private int tileSize = 32;
     private int boardWidth = columnCount * tileSize;
     private int boardHeight = rowCount * tileSize;
+    private boolean scared = false;
+    private long scaredTimeEnd = 0;
+    private final int SCARED_DURATION = 7000;
 
     private Image wallImage;
     private Image blueGhostImage;
     private Image orangeGhostImage;
     private Image pinkGhostImage;
     private Image redGhostImage;
+    private Image scaredGhostImage;
 
     private Image pacmanUpImage;
     private Image pacmanDownImage;
     private Image pacmanLeftImage;
     private Image pacmanRightImage;
+
+    private Image powerFoodImage;
 
     // queued input: what the player wants to do next
     private char queuedDirection = '\0';
@@ -186,11 +193,14 @@ public class PacMan extends JPanel implements ActionListener, KeyListener {
         orangeGhostImage = new ImageIcon(getClass().getResource("./orangeGhost.png")).getImage();
         pinkGhostImage = new ImageIcon(getClass().getResource("./pinkGhost.png")).getImage();
         redGhostImage = new ImageIcon(getClass().getResource("./redGhost.png")).getImage();
+        scaredGhostImage = new ImageIcon(getClass().getResource("./scaredGhost.png")).getImage();
 
         pacmanUpImage = new ImageIcon(getClass().getResource("./pacmanUp.png")).getImage();
         pacmanDownImage = new ImageIcon(getClass().getResource("./pacmanDown.png")).getImage();
         pacmanLeftImage = new ImageIcon(getClass().getResource("./pacmanLeft.png")).getImage();
         pacmanRightImage = new ImageIcon(getClass().getResource("./pacmanRight.png")).getImage();
+
+        powerFoodImage = new ImageIcon(getClass().getResource("./powerFood.png")).getImage();
     }
 
     private void initializeGhosts() {
@@ -239,12 +249,23 @@ public class PacMan extends JPanel implements ActionListener, KeyListener {
                     ghosts.add(ghost);
                 } else if (tile == 'P') { // pacman
                     pacman = new Block(pacmanRightImage, x, y, tileSize, tileSize);
-                } else if (tile == ' ') { // food
+                } else if (tile == ' ') {
                     Block food = new Block(null, x + 14, y + 14, 4, 4);
                     foods.add(food);
                 }
+
             }
         }
+        // Hardcoded power food locations (four corners)
+        Block powerFood1 = new Block(powerFoodImage, 8 + tileSize, 8 + tileSize, 16, 16); // top-left
+        Block powerFood2 = new Block(powerFoodImage, (columnCount - 1) * tileSize + 8 - tileSize, 8 + tileSize, 16, 16); // top-right
+        Block powerFood3 = new Block(powerFoodImage, 8 + tileSize, (rowCount - 1) * tileSize + 8 - tileSize, 16, 16); // bottom-left
+        Block powerFood4 = new Block(powerFoodImage, (columnCount - 1) * tileSize + 8 - tileSize, (rowCount - 1) * tileSize + 8 - tileSize, 16, 16); // bottom-right
+
+        foods.add(powerFood1);
+        foods.add(powerFood2);
+        foods.add(powerFood3);
+        foods.add(powerFood4);
     }
 
     // ===== GRAPH HELPERS =====
@@ -423,6 +444,49 @@ public class PacMan extends JPanel implements ActionListener, KeyListener {
         return step;
     }
 
+    //==========Hybrid========
+    private Node hybridNextStep(Node ghostNode) {
+        // pinky
+        Node pinkyTarget = getAheadOfPacmanNode(4); // 4 tiles ahead
+        Node aStep = aStarNextStep(ghostNode, pinkyTarget);
+
+        // blinky
+        Node blinkyTarget = getNodeForBlock(pacman);
+        Node bStep = bfsNextStep(ghostNode, blinkyTarget);
+
+        // combo
+        // if A* gives valid step, use it 70% of the time
+        if (aStep != null && Math.random() < 0.7) {
+            return aStep;
+        }
+        // Otherwise BFS
+        return bStep;
+    }
+//===============================================
+
+    //scared nextstep
+    private Node scaredNextStep(Block ghost) {
+        if (!isCenteredOnTile(ghost)) return null;
+
+        Node ghostNode = getNodeForBlock(ghost);
+        Node pacNode = getNodeForBlock(pacman);
+        if (ghostNode == null || pacNode == null) return null;
+
+        // Pick the neighbor farthest from Pac-Man
+        Node bestNode = null;
+        int maxDist = -1;
+
+        for (Node nb : ghostNode.neighbors) {
+            int dist = Math.abs(nb.r - pacNode.r) + Math.abs(nb.c - pacNode.c);
+            if (dist > maxDist) {
+                maxDist = dist;
+                bestNode = nb;
+            }
+        }
+
+        return bestNode;
+    }
+
     // reused maps for A*
     private Map<Node, Node> parent = new HashMap<>();
     private Map<Node, Integer> gScore = new HashMap<>();
@@ -479,12 +543,14 @@ public class PacMan extends JPanel implements ActionListener, KeyListener {
         movePacman();
         moveGhosts();
         checkFoodCollision();
+        checkPowerFoodCollision();
 
         if (foods.isEmpty()) {
             loadMap();
             buildGraph();
             resetPositions();
         }
+        updateScaredMode();
     }
 
     private void movePacman() {
@@ -508,21 +574,39 @@ public class PacMan extends JPanel implements ActionListener, KeyListener {
     private void moveGhosts() {
         for (Block ghost : ghosts) {
             if (collision(ghost, pacman)) {
-                handleGhostCollision();
+                handleGhostCollision(ghost);
                 return;
             }
 
-            switch (ghost.ghostType) {
-                case 'r' -> moveRedGhost(ghost); // Blinky: BFS
-                case 'p' -> movePinkGhost(ghost); // Pinky: A*
-                case 'b' -> moveBlueGhost(ghost); // Inky: hybrid BFS + A*
-                case 'o' -> moveOrangeGhost(ghost); // Clyde: random
-                default -> moveGenericGhost(ghost);
+            else if (!scared){
+                switch (ghost.ghostType) {
+                    case 'r' -> moveRedGhost(ghost); // Blinky: BFS
+                    case 'p' -> movePinkGhost(ghost); // Pinky: A*
+                    case 'b' -> moveBlueGhost(ghost); // Inky: hybrid BFS + A*
+                    case 'o' -> moveOrangeGhost(ghost); // Clyde: random
+                    default -> moveGenericGhost(ghost);
+                }
             }
+
+            else { moveScaredGhost(ghost); }
+
         }
     }
 
-    // Individual Ghosts 
+
+    // Individual Ghosts
+
+    private void moveScaredGhost(Block ghost) {
+        if (!isCenteredOnTile(ghost)) {
+            ghost.x += ghost.velocityX;
+            ghost.y += ghost.velocityY;
+            checkWallCollision(ghost);
+            return;
+        }
+
+        Node next = scaredNextStep(ghost);
+        scaredRun(ghost, next);
+    }
 
     // Blinky – BFS shortest path directly to Pac-Man
     private void moveRedGhost(Block ghost) {
@@ -535,57 +619,10 @@ public class PacMan extends JPanel implements ActionListener, KeyListener {
         aStarChase(ghost, targetAhead);
     }
 
-    // Inky – hybrid: sometimes BFS to Pac-Man, sometimes A* to ahead tile
     private void moveBlueGhost(Block ghost) {
-        if (!isCenteredOnTile(ghost)) {
-            // just keep going between decisions
-            ghost.x += ghost.velocityX;
-            ghost.y += ghost.velocityY;
-            checkWallCollision(ghost);
-            return;
-        }
-
-        Node ghostNode = getNodeForBlock(ghost);
-        Node pacNode = getNodeForBlock(pacman);
-        Node ahead = getAheadOfPacmanNode(2);
-
-        if (ghostNode == null || pacNode == null) {
-            moveGenericGhost(ghost);
-            return;
-        }
-
-        Node target;
-        Node next;
-
-        // mix of Blinky-style BFS and Pinky-style A*
-        if (random.nextBoolean()) {
-            // Blinky style: BFS straight to Pac-Man
-            target = pacNode;
-            next = bfsNextStep(ghostNode, target);
-        } else {
-            // Pinky style: A* to ahead-of-Pac-Man tile
-            target = (ahead != null ? ahead : pacNode);
-            next = aStarNextStep(ghostNode, target);
-        }
-
-        if (next != null && next != ghostNode) {
-            int dr = next.r - ghostNode.r;
-            int dc = next.c - ghostNode.c;
-
-            if (dr == -1 && dc == 0)
-                ghost.updateDirection('U');
-            else if (dr == 1 && dc == 0)
-                ghost.updateDirection('D');
-            else if (dr == 0 && dc == -1)
-                ghost.updateDirection('L');
-            else if (dr == 0 && dc == 1)
-                ghost.updateDirection('R');
-        }
-
-        ghost.x += ghost.velocityX;
-        ghost.y += ghost.velocityY;
-        checkWallCollision(ghost);
+        hybridChase(ghost);
     }
+
 
     // Clyde – random-ish wandering (default / random behavior)
     private void moveOrangeGhost(Block ghost) {
@@ -669,20 +706,92 @@ public class PacMan extends JPanel implements ActionListener, KeyListener {
         checkWallCollision(ghost);
     }
 
+    //hybrid chase helper
+    private void hybridChase(Block ghost) {
+        if (!isCenteredOnTile(ghost)) {
+            ghost.x += ghost.velocityX;
+            ghost.y += ghost.velocityY;
+            checkWallCollision(ghost);
+            return;
+        }
+
+        Node ghostNode = getNodeForBlock(ghost);
+        if (ghostNode == null) {
+            moveGenericGhost(ghost);
+            return;
+        }
+
+        Node next = hybridNextStep(ghostNode);
+        if (next == null || next == ghostNode) {
+            moveGenericGhost(ghost);
+            return;
+        }
+
+        int dr = next.r - ghostNode.r;
+        int dc = next.c - ghostNode.c;
+
+        if (dr == -1 && dc == 0) ghost.updateDirection('U');
+        else if (dr == 1 && dc == 0) ghost.updateDirection('D');
+        else if (dr == 0 && dc == -1) ghost.updateDirection('L');
+        else if (dr == 0 && dc == 1) ghost.updateDirection('R');
+
+        ghost.x += ghost.velocityX;
+        ghost.y += ghost.velocityY;
+        checkWallCollision(ghost);
+    }
+
+    private void scaredRun(Block ghost, Node next) {
+        if (next == null) return;
+
+        Node ghostNode = getNodeForBlock(ghost);
+        if (ghostNode == null) return;
+
+        int dr = next.r - ghostNode.r;
+        int dc = next.c - ghostNode.c;
+
+        if (dr == -1 && dc == 0) ghost.updateDirection('U');
+        else if (dr == 1 && dc == 0) ghost.updateDirection('D');
+        else if (dr == 0 && dc == -1) ghost.updateDirection('L');
+        else if (dr == 0 && dc == 1) ghost.updateDirection('R');
+
+        ghost.x += ghost.velocityX;
+        ghost.y += ghost.velocityY;
+        checkWallCollision(ghost);
+    }
+
+
     private void moveGenericGhost(Block ghost) {
         ghost.x += ghost.velocityX;
         ghost.y += ghost.velocityY;
         checkWallCollision(ghost);
     }
 
+    //gpt helped define tunnel logic
     private void checkWallCollision(Block block) {
+        // Define tunnel row
+        int tunnelRow = 9; // adjust to match your tunnel row
+
+        // Tunnel wrap: teleport to opposite side
+        if (block.y / tileSize == tunnelRow) {
+            if (block.x + block.width < 0) {          // exited left
+                block.x = boardWidth;
+            } else if (block.x > boardWidth) {       // exited right
+                block.x = -block.width;
+            }
+        }
+
+        // Normal wall collision for everything else
         for (Block wall : walls) {
+            // Skip walls in tunnel row (already handled)
+            if (block.y / tileSize == tunnelRow && wall.y / tileSize == tunnelRow) {
+                continue;
+            }
+
             if (collision(block, wall) ||
-                    block.x < 0 ||
-                    block.x + block.width > boardWidth ||
                     block.y < 0 ||
                     block.y + block.height > boardHeight) {
 
+                // revert movement
                 block.x -= block.velocityX;
                 block.y -= block.velocityY;
 
@@ -696,14 +805,32 @@ public class PacMan extends JPanel implements ActionListener, KeyListener {
         }
     }
 
-    private void handleGhostCollision() {
-        lives--;
-        if (lives <= 0) {
-            gameOver = true;
-        } else {
-            resetPositions();
+
+    private void handleGhostCollision(Block ghost) {
+        if (!scared){
+            lives--;
+            if (lives <= 0) {
+                gameOver = true;
+            } else {
+                resetPositions();
+            }
         }
+        else{
+            score += 500;
+            returnGhostHome(ghost);
+
+        }
+
     }
+
+    private void returnGhostHome(Block ghost) {
+        ghost.x = ghost.startX;
+        ghost.y = ghost.startY;
+        ghost.velocityX = 0;
+        ghost.velocityY = 0;
+        ghost.direction = 'U';      // or any default
+    }
+
 
     private void checkFoodCollision() {
         Block eaten = null;
@@ -717,6 +844,41 @@ public class PacMan extends JPanel implements ActionListener, KeyListener {
             foods.remove(eaten);
         }
     }
+
+    private void checkPowerFoodCollision() {
+        Block eaten = null;
+        for (Block food : foods) {
+            if (collision(pacman, food)) {
+                eaten = food;
+                score += 100;
+                for (Block ghost : ghosts) {
+                    ghost.image = scaredGhostImage;
+                }
+                scared = true;
+                scaredTimeEnd = System.currentTimeMillis() + SCARED_DURATION;
+
+            }
+        }
+        if (eaten != null) {
+            foods.remove(eaten);
+        }
+    }
+
+    private void updateScaredMode() {
+        if (scared && System.currentTimeMillis() >= scaredTimeEnd) {
+            scared = false;
+            for (Block ghost : ghosts) {
+                switch (ghost.ghostType) {
+                    case 'r' -> ghost.image = redGhostImage;    // Blinky
+                    case 'p' -> ghost.image = pinkGhostImage;   // Pinky
+                    case 'b' -> ghost.image = blueGhostImage;   // Inky
+                    case 'o' -> ghost.image = orangeGhostImage; // Clyde
+                }
+            }
+
+        }
+    }
+
 
     public boolean collision(Block a, Block b) {
         return a.x < b.x + b.width &&
